@@ -1,5 +1,7 @@
 # Large data files — obtain separately (see README)
 data/*.parquet
+data/processed/*.parquet
+data/processed/*.joblib
 
 # Python
 __pycache__/
