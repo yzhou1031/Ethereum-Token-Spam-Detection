@@ -1,6 +1,6 @@
 # Spam Detection Pipeline — Ethereum Token Transfer Data
 
-**Project:** FinTech-540 | **Data:** 1,000-block window (~20M transfers) | **Status:** EDA Complete
+**Project:** FinTech-540 | **Data:** 1,000-block window (~20M transfers) | **Status:** Preprocessing Complete
 
 ---
 
@@ -16,28 +16,39 @@ Classify Ethereum tokens as **spam (0)** or **legitimate (1)** using token-level
 ## Pipeline Stages
 
 ```
-EDA (Done)
+EDA                              ✅ Done
    ↓
-Stage 1: Feature Engineering & Preprocessing
+Stage 1: Feature Engineering & Preprocessing   ✅ Done  →  preprocessing.ipynb
    ↓
-Stage 2: Train/Test Split & Class Imbalance Handling
+Stage 2: Train/Test Split & Class Imbalance Handling   (folded into Stage 1 ✅)
    ↓
-Stage 3: Baseline Model Training
+Stage 3: Baseline Model Training               ⬜ Next  →  modeling.ipynb
    ↓
-Stage 4: Advanced Model Training & Hyperparameter Tuning
+Stage 4: Advanced Model Training & Hyperparameter Tuning   ⬜ To do
    ↓
-Stage 5: Model Evaluation & Interpretation
+Stage 5: Model Evaluation & Interpretation     ⬜ To do  →  evaluation.ipynb
    ↓
-Stage 6: (Optional) Semi-Supervised Extension
+Stage 6: (Optional) Semi-Supervised Extension  ⬜ To do
    ↓
-Stage 7: Final Report & Deliverables
+Stage 7: Final Report & Deliverables           ⬜ To do
 ```
 
 ---
 
-## Stage 1 — Feature Engineering & Preprocessing
+## Stage 1 — Feature Engineering & Preprocessing ✅ Complete
 
-**Goal:** Finalize the feature matrix from EDA and prepare it for modeling.
+**Notebook:** `preprocessing.ipynb` | **Output:** `data/processed/` (6 parquet splits + scaler + feature list)
+
+**What was done:**
+- Rebuilt `token_features` from raw transfer data (mirrors EDA exactly)
+- Added 5 new features: `block_range`, `unique_values_count`, `zero_value_ratio`, `top1_sender_share`, `receiver_concentration` (Gini)
+- Dropped leakage columns (`symbol_collision`, `is_verified`, `asset`) — 16 final features
+- Median imputation (no nulls found in labeled set), `log1p` transform on 10 skewed features
+- Stratified 70/15/15 split — Train: ~2,524 | Val: ~541 | Test: ~541
+- `RobustScaler` fit on train only; saved scaled + unscaled versions
+- All 13 cells ran without errors
+
+**Goal (archived):** Finalize the feature matrix from EDA and prepare it for modeling.
 
 ### 1.1 Finalize Feature Set
 
@@ -299,11 +310,11 @@ Before training, verify these columns are **excluded** from `X`:
 ## Recommended Next Action
 
 ```
-1. Open a new notebook: preprocessing.ipynb
-2. Load token_features from EDA
-3. Drop leakage columns, log-transform skewed features, impute nulls
-4. Stratified 70/15/15 split → save train/val/test to parquet
-5. Then open modeling.ipynb and train baselines
+1. Open modeling.ipynb
+2. Load data/processed/train_unscaled.parquet (tree models) or train.parquet (linear models)
+3. Train baselines: Logistic Regression, Decision Tree, Naive Bayes
+4. Train advanced models: Random Forest, XGBoost/LightGBM
+5. Compare CV F1-macro scores across all models
 ```
 
 ---
