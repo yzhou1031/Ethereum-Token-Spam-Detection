@@ -134,8 +134,11 @@ Examples:
 
 | Name | GitHub | Role |
 |------|--------|------|
-| Yuchen Zhou | — | Lead |
-| *(add teammates)* | — | — |
+| Yuchen Zhou | [@yzhou1031](https://github.com/yzhou1031) | Lead |
+| Dylan Zhao | [@DylanZhao1](https://github.com/DylanZhao1) | Collaborator |
+| Yang Puhan | [@yangpuhan](https://github.com/yangpuhan) | Collaborator |
+| Jennifer H. | [@Jennif2003](https://github.com/Jennif2003) | Collaborator |
+| Becky Qin | — (invite pending) | Collaborator |
 
 ## License
 
