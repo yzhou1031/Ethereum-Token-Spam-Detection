@@ -1,6 +1,6 @@
 # Spam Detection Pipeline — Ethereum Token Transfer Data
 
-**Project:** FinTech-540 | **Data:** 1,000-block window (~20M transfers) | **Status:** Preprocessing Complete
+**Project:** FinTech-540 | **Data:** 1,000-block window (~20M transfers) | **Status:** Stage 6 Complete — Final Report Remaining
 
 ---
 
@@ -9,263 +9,161 @@
 Classify Ethereum tokens as **spam (0)** or **legitimate (1)** using token-level behavioral features engineered from raw transfer events. Labels are derived from:
 - **Legit (1):** Contract address in `token_labels.csv` (verified)
 - **Spam (0):** Same symbol as a verified token but different contract address (symbol collision)
-- **Unlabeled (NaN):** Unverified, no collision — excluded from supervised training, candidate for semi-supervised extension
+- **Unlabeled (NaN):** Unverified, no collision — excluded from supervised training
 
 ---
 
 ## Pipeline Stages
 
 ```
-EDA                              ✅ Done
+EDA                              ✅ Done  →  EDA.ipynb
    ↓
 Stage 1: Feature Engineering & Preprocessing   ✅ Done  →  preprocessing.ipynb
    ↓
-Stage 2: Train/Test Split & Class Imbalance Handling   (folded into Stage 1 ✅)
+Stage 2: Train/Test Split & Class Imbalance    ✅ Done  (folded into Stage 1)
    ↓
 Stage 3: Baseline Model Training               ✅ Done  →  modeling.ipynb
    ↓
-Stage 4: Advanced Model Training & Hyperparameter Tuning   ✅ Done  →  modeling.ipynb
+Stage 4: Advanced Models & Hyperparameter Tuning  ✅ Done  →  modeling.ipynb
    ↓
-Stage 5: Model Evaluation & Interpretation     ⬜ Next  →  evaluation.ipynb
+Stage 5: Model Evaluation & Interpretation     ✅ Done  →  evaluation.ipynb
    ↓
-Stage 6: Semi-Supervised Extension             ⬜ To do  →  semi_supervised.ipynb
+Stage 6: Semi-Supervised Extension             ✅ Done  →  semi_supervised.ipynb
    ↓
-Stage 7: Final Report & Deliverables           ⬜ To do
+Stage 7: Final Report & Deliverables           ⬜ Next
 ```
 
 ---
 
 ## Stage 1 — Feature Engineering & Preprocessing ✅ Complete
 
-**Notebook:** `preprocessing.ipynb` | **Output:** `data/processed/` (6 parquet splits + scaler + feature list)
+**Notebook:** `preprocessing.ipynb` | **Output:** `data/processed/`
 
-**What was done:**
-- Rebuilt `token_features` from raw transfer data (mirrors EDA exactly)
-- Added 5 new features: `block_range`, `unique_values_count`, `zero_value_ratio`, `top1_sender_share`, `receiver_concentration` (Gini)
-- Dropped leakage columns (`symbol_collision`, `is_verified`, `asset`) — 16 final features
-- Median imputation (no nulls found in labeled set), `log1p` transform on 10 skewed features
-- Stratified 70/15/15 split — Train: ~2,524 | Val: ~541 | Test: ~541
-- `RobustScaler` fit on train only; saved scaled + unscaled versions
-- All 13 cells ran without errors
-
-**Goal (archived):** Finalize the feature matrix from EDA and prepare it for modeling.
-
-### 1.1 Finalize Feature Set
-
-Start from `token_features` DataFrame built in EDA. Confirmed features:
-
-| Feature | Type | Notes |
-|---|---|---|
-| `n_transfers` | numeric | Log-transform (right-skewed) |
-| `n_unique_senders` | numeric | Log-transform |
-| `n_unique_receivers` | numeric | Log-transform |
-| `sender_receiver_ratio` | numeric | Log-transform |
-| `transfers_per_block` | numeric | Log-transform |
-| `n_distinct_blocks` | numeric | Log-transform |
-| `value_mean` | numeric | Log-transform |
-| `value_std` | numeric | Log-transform |
-| `value_null_ratio` | numeric | Already [0,1] |
-| `category_entropy` | numeric | Already bounded |
-| `sender_is_labeled` | numeric | Proportion [0,1] |
-| `is_verified` | binary | Drop — leaks label |
-| `symbol_collision` | binary | Drop — directly constructs label |
-
-> **Important:** Drop `is_verified` and `symbol_collision` before training — they directly encode the label and would cause data leakage.
-
-### 1.2 Additional Features to Engineer (Recommended)
-
-- `receiver_concentration`: Gini coefficient of transfer counts per receiver (high = centralized airdrop)
-- `block_range`: `max(blockNum) - min(blockNum)` for the token (narrow = burst)
-- `unique_values_count`: Number of distinct transfer amounts (low = uniform airdrop)
-- `top1_sender_share`: Fraction of transfers from the single most active sender
-- `has_zero_value_transfers`: Binary, fraction of transfers with value = 0
-
-### 1.3 Preprocessing
-
-```python
-# Recommended steps
-1. Filter: keep only rows where label is not NaN (3,606 labeled tokens)
-2. Log-transform skewed numeric features: log1p(x)
-3. Impute missing values (value_mean, value_std): median imputation
-4. Scale features: StandardScaler or RobustScaler (robust to outliers)
-5. Encode any remaining categoricals if added
-```
-
-**Output:** `X_labeled` (3,606 × ~14 features), `y_labeled` (3,606 binary labels)
+| Item | Detail |
+|---|---|
+| Token transfers | 2,161,313 (filtered from 3.65M raw transfers) |
+| Unique contracts | 12,356 |
+| Labeled tokens | 3,606 (spam=2,007 / legit=1,599) |
+| Features | 16 final (14 from EDA + `block_range`, `unique_values_count`, `zero_value_ratio`, `top1_sender_share`, `receiver_concentration`) |
+| Leakage cols dropped | `symbol_collision`, `is_verified`, `asset` |
+| Imputation | Median (0 nulls found in labeled set) |
+| Transform | `log1p` on 10 skewed features |
+| Outputs | `train/val/test.parquet` (scaled) + `_unscaled` variants + `scaler.joblib` |
 
 ---
 
 ## Stage 2 — Train/Test Split & Class Imbalance ✅ Complete
 
-**Folded into `preprocessing.ipynb` (Stage 1).**
+**Folded into `preprocessing.ipynb`.**
 
-**Actual results:**
-- Legit (1): 1,599 (44.3%) | Spam (0): 2,007 (55.7%) — mild imbalance
-- Stratified 70/15/15 split via `train_test_split(stratify=y)`
-  - Train: 2,524 | Val: 541 | Test: 541 — class ratios preserved in all splits
-- Test set is held out and untouched until final evaluation (Stage 5)
-- Imbalance strategy: use `class_weight='balanced'` in all estimators; revisit SMOTE only if F1 on val set is poor
+| Split | Size | Spam | Legit |
+|---|---|---|---|
+| Train | 2,524 | 1,405 (55.7%) | 1,119 (44.3%) |
+| Val | 541 | 301 | 240 |
+| Test | 541 | 301 | 240 |
+
+- Stratified split preserves class ratios across all three sets
+- Imbalance strategy: `class_weight='balanced'` (SMOTE not needed)
+- Test set held out and untouched until Stage 5
 
 ---
 
-## Stage 3 — Baseline Models
+## Stage 3 — Baseline Models ✅ Complete
 
-Train simple models first to establish a performance floor. Use 5-fold stratified cross-validation on the training set.
+**Notebook:** `modeling.ipynb` | **CV:** 5-fold stratified
 
-### Models to Train
+| Model | CV F1-macro | CV ROC-AUC |
+|---|---|---|
+| Logistic Regression | 0.8192 ±0.019 | 0.8845 |
+| Decision Tree | 0.8359 ±0.015 | 0.9023 |
+| Gaussian Naive Bayes | 0.7923 ±0.019 | 0.8586 |
 
-1. **Logistic Regression** — linear baseline, interpretable coefficients
-2. **Decision Tree** — depth-limited for interpretability
-3. **Naive Bayes** (GaussianNB) — probabilistic baseline
+Logistic Regression established a strong linear baseline (0.819), showing that engineered features are largely linearly separable.
 
-### Evaluation Metrics
+---
 
-Since both false positives (blocking legit tokens) and false negatives (missing spam) matter:
+## Stage 4 — Advanced Models & Hyperparameter Tuning ✅ Complete
 
-| Metric | Why |
+**Notebook:** `modeling.ipynb` | **Tuning:** RandomizedSearchCV, 50 iterations, 5-fold CV
+
+**CV Results:**
+
+| Model | CV F1-macro | CV ROC-AUC |
+|---|---|---|
+| XGBoost (default) | 0.8641 ±0.015 | 0.9369 |
+| Random Forest | 0.8615 ±0.014 | 0.9346 |
+| LightGBM (default) | 0.8567 ±0.012 | 0.9322 |
+
+**After tuning:**
+
+| Model | Best CV F1-macro |
 |---|---|
-| **F1 Score (macro)** | Primary metric — balances precision and recall across both classes |
-| **ROC-AUC** | Threshold-independent ranking quality |
-| **Precision** (per class) | Cost of false alarms |
-| **Recall** (per class) | Cost of missed spam |
-| **Confusion Matrix** | Visual breakdown |
+| LightGBM (tuned) | 0.8711 |
+| XGBoost (tuned) | 0.8687 |
 
-```python
-from sklearn.metrics import classification_report, roc_auc_score, ConfusionMatrixDisplay
-```
+**Validation set — final model selection:**
+
+| Model | Val F1-macro | Val ROC-AUC | Val F1-spam | Val F1-legit |
+|---|---|---|---|---|
+| **LightGBM (tuned)** | **0.8548** | 0.9356 | 0.8752 | 0.8344 |
+| Random Forest | 0.8528 | 0.9412 | 0.8738 | 0.8319 |
+| XGBoost (tuned) | 0.8494 | 0.9370 | 0.8697 | 0.8291 |
+| Logistic Regression | 0.8340 | 0.8832 | 0.8576 | 0.8103 |
+| Decision Tree | 0.8113 | 0.9058 | 0.8382 | 0.7845 |
+| Gaussian Naive Bayes | 0.7865 | 0.8530 | 0.8180 | 0.7549 |
+
+**Selected model:** LightGBM (tuned) — saved to `models/best_model.joblib`
 
 ---
 
-## Stage 4 — Advanced Models & Hyperparameter Tuning
+## Stage 5 — Model Evaluation & Interpretation ✅ Complete
 
-### 4.1 Models to Train
+**Notebook:** `evaluation.ipynb` | **Data:** held-out test set (541 tokens, never seen during training)
 
-| Model | Key Hyperparameters |
+**Final test set results — LightGBM (tuned):**
+
+| Metric | Score |
 |---|---|
-| **Random Forest** | `n_estimators`, `max_depth`, `min_samples_leaf` |
-| **Gradient Boosting (XGBoost / LightGBM)** | `n_estimators`, `learning_rate`, `max_depth`, `subsample` |
-| **Support Vector Machine** | `C`, `kernel`, `gamma` |
-| **MLP (Neural Net)** | `hidden_layer_sizes`, `dropout`, `learning_rate` |
+| F1-macro | 0.8838 |
+| ROC-AUC | 0.9562 |
+| Avg Precision | — |
+| Spam precision / recall / F1 | 0.85 / 0.90 / 0.88 (approx from val) |
+| Legit precision / recall / F1 | 0.86 / 0.81 / 0.83 (approx from val) |
 
-**Recommended primary model:** XGBoost or LightGBM — handles tabular data well, built-in feature importance, robust to scale.
+**SHAP top features:** `n_unique_senders`, `n_transfers`, `n_unique_receivers`, `sender_receiver_ratio`, `top1_sender_share`, `n_distinct_blocks`
 
-### 4.2 Hyperparameter Tuning
+**Error analysis:**
+- False negatives (spam that slips through): tokens with secondary organic activity post-airdrop, diluting the spam signal
+- False positives (legit flagged as spam): niche/new tokens with sparse transfer history
 
-```python
-from sklearn.model_selection import RandomizedSearchCV  # or Optuna
-
-# Use RandomizedSearchCV with 5-fold CV on train set
-# Optimize for: F1-macro
-# Budget: ~50-100 iterations
-```
-
-Use `Optuna` for more efficient search if time permits:
-```python
-import optuna
-# Define objective function, minimize 1 - val_f1_macro
-```
-
-### 4.3 Cross-Validation Setup
-
-```python
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import RobustScaler
-
-pipe = Pipeline([
-    ('scaler', RobustScaler()),
-    ('clf', XGBClassifier(use_label_encoder=False, eval_metric='logloss'))
-])
-```
-
-Always include preprocessing inside the CV pipeline to prevent data leakage.
+**Threshold guidance:** Default 0.5 catches ~90% spam. Raise to 0.6–0.65 to reduce false alarms; lower to 0.35–0.40 to maximise recall.
 
 ---
 
-## Stage 5 — Model Evaluation & Interpretation
+## Stage 6 — Semi-Supervised Extension ✅ Complete
 
-### 5.1 Final Test Set Evaluation
+**Notebook:** `semi_supervised.ipynb` | **Unlabeled tokens:** 8,750
 
-After selecting the best model from Stage 4, evaluate **once** on the held-out test set:
+**Result: semi-supervised did not improve over supervised baseline.**
 
-```python
-# Report all metrics
-print(classification_report(y_test, y_pred))
-print("ROC-AUC:", roc_auc_score(y_test, y_proba))
-ConfusionMatrixDisplay.from_predictions(y_test, y_pred)
-```
+| Approach | Train size | F1-macro | Δ vs baseline |
+|---|---|---|---|
+| Supervised only (baseline) | 2,524 | **0.8838** | — |
+| Pseudo-label (t=0.10) | 6,577 | 0.8520 | −0.032 |
+| Pseudo-label (t=0.15) | 7,508 | 0.8648 | −0.019 |
+| Pseudo-label (t=0.20) | 8,440 | 0.8667 | −0.017 |
+| Self-Training (t=0.90) | 9,795 | 0.8557 | −0.028 |
+| Self-Training (t=0.80) | 10,764 | 0.8611 | −0.023 |
 
-### 5.2 Feature Importance
+**Why it failed:** (1) labeled set already representative; (2) 14:1 pseudo-label class skew; (3) unlabeled pseudo-spam are dormant contracts (different type from training spam); (4) 53% of unlabeled tokens are genuinely uncertain.
 
-For tree-based models:
-```python
-# Built-in feature importance
-xgb_model.feature_importances_
-
-# SHAP values (recommended — model-agnostic, locally interpretable)
-import shap
-explainer = shap.TreeExplainer(best_model)
-shap_values = explainer.shap_values(X_test)
-shap.summary_plot(shap_values, X_test)
-```
-
-**Expected top features** (from EDA correlations):
-1. `n_unique_senders` (r=0.61)
-2. `n_transfers` (r=0.59)
-3. `n_unique_receivers` (r=0.59)
-4. `sender_receiver_ratio` (airdrop signal)
-5. `n_distinct_blocks` (burst signal)
-
-### 5.3 Error Analysis
-
-Examine misclassified tokens:
-- False positives: legit tokens flagged as spam — are they niche/low-activity tokens?
-- False negatives: spam that passed — do they mimic legitimate activity patterns?
+**Decision:** Retain supervised-only LightGBM as the final model.
 
 ---
 
-## Stage 6 — (Optional) Semi-Supervised Extension
+## Stage 7 — Final Report & Deliverables ⬜ Next
 
-**Motivation:** 10,757 unlabeled tokens remain. Semi-supervised learning can leverage these.
-
-### Option A: Self-Training (Pseudo-Labeling)
-
-```python
-from sklearn.semi_supervised import SelfTrainingClassifier
-
-# Assign -1 to unlabeled samples in y
-# Train self-training wrapper on combined labeled + unlabeled X
-```
-
-### Option B: Label Propagation
-
-```python
-from sklearn.semi_supervised import LabelPropagation, LabelSpreading
-```
-
-### Option C: Confidence Thresholding
-
-1. Train supervised model on labeled data
-2. Predict probabilities on unlabeled tokens
-3. Add high-confidence predictions (p > 0.90) to training set as pseudo-labels
-4. Retrain and evaluate on held-out test set
-
-**Caveat:** Pseudo-labels are noisy — monitor test set performance carefully.
-
----
-
-## Stage 7 — Report & Deliverables
-
-### Notebook Structure (Recommended)
-
-```
-EDA.ipynb              (done)
-preprocessing.ipynb    → feature engineering, cleaning, splitting
-modeling.ipynb         → baseline + advanced models, tuning
-evaluation.ipynb       → final test evaluation, SHAP, error analysis
-(optional) semi_supervised.ipynb
-```
-
-### Final Report Should Include
+### Report Checklist
 
 - [ ] Problem framing and label construction methodology
 - [ ] EDA summary (key features, distributions, correlations)
@@ -274,31 +172,42 @@ evaluation.ipynb       → final test evaluation, SHAP, error analysis
 - [ ] Best model test set performance with confusion matrix
 - [ ] SHAP feature importance plot
 - [ ] Error analysis: what types of tokens are hardest to classify?
+- [ ] Semi-supervised extension results and conclusion
 - [ ] Discussion: limitations, potential improvements, deployment considerations
+
+### Supporting Documents Already Available
+
+- [x] `feature_description.pdf` — full feature reference for all 16 features
+- [x] `models/val_results.csv` — complete model comparison table
+- [x] All notebooks with inline results and summary cells
 
 ---
 
-## Quick Reference: Feature Leakage Checklist
+## Quick Reference: Feature Leakage Checklist ✅
 
-Before training, verify these columns are **excluded** from `X`:
+All confirmed excluded from feature matrix `X`:
 
-- [ ] `symbol_collision` — directly defines spam label
-- [ ] `is_verified` — directly defines legit label
-- [ ] `asset` (raw token symbol) — identifier, not a behavioral feature
-- [ ] `label` — target variable
+- [x] `symbol_collision` — directly defines spam label
+- [x] `is_verified` — directly defines legit label
+- [x] `asset` (raw token symbol) — identifier, not a behavioral feature
+- [x] `label` — target variable
 
 ---
 
 ## Recommended Next Action
 
 ```
-1. Open modeling.ipynb
-2. Load data/processed/train_unscaled.parquet (tree models) or train.parquet (linear models)
-3. Train baselines: Logistic Regression, Decision Tree, Naive Bayes
-4. Train advanced models: Random Forest, XGBoost/LightGBM
-5. Compare CV F1-macro scores across all models
+Open report / presentation and write up findings.
+All data, figures, and model outputs are available across:
+  - EDA.ipynb              → data insights, feature correlations
+  - preprocessing.ipynb    → feature engineering methodology
+  - modeling.ipynb         → model comparison, best model summary
+  - evaluation.ipynb       → final metrics, SHAP plots, error analysis
+  - semi_supervised.ipynb  → semi-supervised results and analysis
+  - feature_description.pdf → feature reference document
+  - models/val_results.csv  → exportable comparison table
 ```
 
 ---
 
-*Pipeline version 1.0 | Created 2026-03-23*
+*Pipeline version 2.0 | Last updated 2026-03-23*
