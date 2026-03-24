@@ -1,0 +1,203 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{amsmath}
+\usepackage{microtype}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+
+\hypersetup{colorlinks=true, linkcolor=teal, urlcolor=teal}
+
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{1.5em}{0.8em}
+
+\title{\textbf{Feature Description}\\[0.4em]
+       \large Ethereum Token Spam Detection}
+\author{FinTech-540 Project}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\section{Project Overview}
+
+This project builds a supervised binary classifier to distinguish spam tokens (label\,=\,0)
+from legitimate tokens (label\,=\,1) on the Ethereum blockchain.
+Data covers \textbf{1,000 consecutive blocks} ($\approx$\,20 million token transfer events)
+starting at block 20{,}000{,}000.
+
+Labels are defined as follows:
+\begin{itemize}
+  \item \textbf{Legit (1):} Contract address appears in the verified token list (\texttt{token\_labels.csv}).
+  \item \textbf{Spam (0):} Token shares the same symbol as a verified token but uses a different contract address (symbol collision).
+  \item \textbf{Unlabeled (NaN):} Unverified tokens without a known collision --- excluded from supervised training.
+\end{itemize}
+
+All features are aggregated at the \textbf{token (contract address) level} from the raw transfer-event data.
+The final labeled dataset contains \textbf{3,606 tokens} (spam\,=\,2,007\,|\,legit\,=\,1,599).
+
+\section{Raw Transfer Data Columns}
+
+The primary data file is \texttt{transfers\_20000000.parquet}.
+Below are the raw columns used as inputs for feature engineering.
+
+\vspace{0.5em}
+\begin{tabular}{>{\ttfamily}p{4.2cm} p{10cm}}
+\toprule
+\normalfont\textbf{Column} & \textbf{Description} \\
+\midrule
+blockNum          & Block number (hexadecimal string) in which the transfer was included \\
+hash              & Transaction hash uniquely identifying the on-chain transaction \\
+from              & Sender Ethereum address (20-byte hex) \\
+to                & Recipient Ethereum address (20-byte hex) \\
+value             & Transfer amount in decimal token units (float; null for ERC-721/1155) \\
+asset             & Token symbol as reported by the Alchemy API (e.g., USDT, PEPE) \\
+category          & Transfer category: \texttt{erc20}, \texttt{token}, \texttt{erc721}, \texttt{erc1155}, \texttt{specialnft} \\
+rawContract.address & Contract address of the token (lowercase hex) \\
+rawContract.decimal & Token decimal precision (e.g., 18 for most ERC-20 tokens) \\
+rawContract.value  & Raw transfer amount as a hex string before decimal conversion \\
+metadata.blockTimestamp & ISO timestamp of the block \\
+tokenId           & NFT token ID (only for ERC-721 / ERC-1155; null for ERC-20) \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\textit{Note: only transfers with category in \{erc20, token, erc721, erc1155, specialnft\}
+are used ($\approx$\,2.16 million rows after filtering).}
+
+\section{Engineered Features}
+
+All 16 features below are computed per unique \texttt{contract\_addr}
+(i.e., one row per token) and used as the model input matrix $X$.
+
+\vspace{0.5em}
+\noindent\begin{tabular}{>{\ttfamily}p{4.6cm} >{\raggedright\arraybackslash}p{4.0cm} >{\raggedright\arraybackslash}p{5.6cm}}
+\toprule
+\normalfont\textbf{Feature} & \textbf{Calculation} & \textbf{Spam signal / interpretation} \\
+\midrule
+
+\multicolumn{3}{l}{\textit{Activity \& volume}} \\[2pt]
+
+n\_transfers
+  & \texttt{COUNT(hash)} per token
+  & Spam tokens typically have a low total number of transfers (one-off airdrop) \\[4pt]
+
+n\_unique\_senders
+  & \texttt{NUNIQUE(from)} per token
+  & Spam is sent by very few addresses (often just 1 bot); highest correlation with label ($r{=}0.61$) \\[4pt]
+
+n\_unique\_receivers
+  & \texttt{NUNIQUE(to)} per token
+  & Spam airdrops hit many receivers; combined with senders gives the airdrop ratio \\[6pt]
+
+\multicolumn{3}{l}{\textit{Transfer value}} \\[2pt]
+
+value\_mean
+  & \texttt{MEAN(value)} per token
+  & Less discriminative alone; useful in combination with std \\[4pt]
+
+value\_std
+  & \texttt{STD(value)} per token
+  & Spam uses uniform fixed amounts (std $\approx$ 0); legit tokens have varied transfer sizes \\[4pt]
+
+value\_null\_ratio
+  & \texttt{MEAN(value IS NULL)} per token
+  & Spam tokens (especially fake ERC-20s) often lack decimal metadata, producing null values \\[4pt]
+
+zero\_value\_ratio
+  & \texttt{MEAN(value == 0)} per token
+  & Spam airdrops frequently send zero-value transfers to claim wallet attention \\[4pt]
+
+unique\_values\_count
+  & \texttt{NUNIQUE(value)} per token
+  & Spam uses very few distinct amounts (often exactly 1); legit tokens show diverse amounts \\[6pt]
+
+\multicolumn{3}{l}{\textit{Block distribution}} \\[2pt]
+
+n\_distinct\_blocks
+  & \texttt{NUNIQUE(block\_int)} per token
+  & Spam is deployed in a burst of 1--2 blocks; $\approx$78\% of spam in a single block vs 12\% for legit \\[4pt]
+
+block\_range
+  & $\texttt{MAX(block\_int)} - \texttt{MIN(block\_int)}$
+  & Complementary to \texttt{n\_distinct\_blocks}; 0 means all transfers happened in one block \\[6pt]
+
+\multicolumn{3}{l}{\textit{Ratio \& derived}} \\[2pt]
+
+sender\_receiver\_ratio
+  & $\mathit{senders} \;/\; \mathit{receivers}$
+  & Core airdrop signal: few senders $\to$ many receivers gives ratio $\ll 1$; spam median $\approx 0.001$ \\[4pt]
+
+transfers\_per\_block
+  & $\mathit{n\_transfers} \;/\; \mathit{n\_blocks}$
+  & High value indicates a burst (many transfers in one block), characteristic of automated airdrops \\[6pt]
+
+\multicolumn{3}{l}{\textit{Concentration}} \\[2pt]
+
+top1\_sender\_share
+  & $\max(\text{per-sender count}) \;/\; n\_transfers$
+  & Close to 1.0 if a single bot drove all transfers; strong indicator of automated spam \\[4pt]
+
+receiver\_concentration
+  & Gini coeff.\ of transfers-per-receiver
+  & High Gini ($\to 1$) means transfers are concentrated on few receivers; low means evenly spread \\[6pt]
+
+\multicolumn{3}{l}{\textit{External / categorical}} \\[2pt]
+
+category\_entropy
+  & Shannon entropy of the transfer category distribution
+  & Computed as $-\sum p_i \log p_i$ over category proportions; low entropy = homogeneous transfers \\[4pt]
+
+sender\_is\_labeled
+  & Binary: 1 if any sender address appears in \texttt{account\_labels.csv}
+  & Legit tokens are more likely sent by known DEX routers or protocol contracts \\
+
+\bottomrule
+\end{tabular}
+
+\vspace{1em}
+\begin{center}
+\textit{Table 1: Description of engineered features used in the spam detection model}
+\end{center}
+
+\section{Label Construction \& Leakage Note}
+
+Two intermediate columns are computed during preprocessing but \textbf{excluded from the feature matrix}
+because they directly encode the label:
+
+\vspace{0.5em}
+\begin{tabular}{>{\ttfamily}p{3.8cm} p{10.4cm}}
+\toprule
+\normalfont\textbf{Column} & \textbf{Why excluded} \\
+\midrule
+symbol\_collision & Binary flag set to 1 when a token's symbol matches a verified token but the contract address differs. This is the \emph{definition} of the spam label (label\,=\,0), so including it would be direct data leakage. \\[4pt]
+is\_verified & Binary flag set to 1 when the contract address appears in \texttt{token\_labels.csv}. This is the \emph{definition} of the legit label (label\,=\,1). \\
+\bottomrule
+\end{tabular}
+
+\section{Preprocessing Steps}
+
+Before model training, the following transformations are applied (see \texttt{preprocessing.ipynb}):
+
+\begin{enumerate}
+  \item \textbf{Imputation:} Missing values filled with the column median (no nulls were found in the labeled set).
+  \item \textbf{Log transform:} \texttt{log1p} applied to 10 right-skewed features:
+        \texttt{n\_transfers}, \texttt{n\_unique\_senders}, \texttt{n\_unique\_receivers},
+        \texttt{value\_mean}, \texttt{value\_std}, \texttt{sender\_receiver\_ratio},
+        \texttt{transfers\_per\_block}, \texttt{n\_distinct\_blocks}, \texttt{block\_range},
+        \texttt{unique\_values\_count}.
+  \item \textbf{Scaling:} \texttt{RobustScaler} (centers on median, scales by IQR) fit on the training set only and applied to validation and test sets --- prevents data leakage through the scaler.
+  \item \textbf{Split:} Stratified 70\,/\,15\,/\,15 train\,/\,val\,/\,test split.
+        Train\,=\,2,524\,|\,Val\,=\,541\,|\,Test\,=\,541.
+\end{enumerate}
+
+\textit{Note: tree-based models (Random Forest, XGBoost, LightGBM) are trained on the \textbf{unscaled} log-transformed splits since they are scale-invariant. Linear models (Logistic Regression, Naive Bayes) use the scaled splits.}
+
+\end{document}
