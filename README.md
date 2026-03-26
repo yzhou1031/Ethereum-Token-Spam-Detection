@@ -138,7 +138,7 @@ Examples:
 | Dylan Zhao | [@DylanZhao1](https://github.com/DylanZhao1) | Collaborator |
 | Yang Puhan | [@yangpuhan](https://github.com/yangpuhan) | Collaborator |
 | Jennifer H. | [@Jennif2003](https://github.com/Jennif2003) | Collaborator |
-| Becky Qin | — (invite pending) | Collaborator |
+| Becky Qin | [@chuyuqin](https://github.com/chuyuqin) | Collaborator |
 
 ## License
 
