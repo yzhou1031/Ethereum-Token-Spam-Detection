@@ -48,10 +48,10 @@ Stage 9: Final Report & Deliverables              ⬜ Next
 | Token transfers | 2,161,313 (filtered from 3.65M raw transfers) |
 | Unique contracts | 12,356 |
 | Labeled tokens | 3,606 (spam=2,007 / legit=1,599) |
-| Features | 16 final (14 from EDA + `block_range`, `unique_values_count`, `zero_value_ratio`, `top1_sender_share`, `receiver_concentration`) |
+| Features | 27 final (16 from EDA/preprocessing + 4 graph-based + 3 temporal + 4 MEV/transaction features from Issue #2) |
 | Leakage cols dropped | `symbol_collision`, `is_verified`, `asset` |
 | Imputation | Median (0 nulls found in labeled set) |
-| Transform | `log1p` on 10 skewed features |
+| Transform | `log1p` on 18 skewed features |
 | Outputs | `train/val/test.parquet` (scaled) + `_unscaled` variants + `scaler.joblib` |
 
 ---
@@ -109,14 +109,14 @@ Logistic Regression established a strong linear baseline (0.819), showing that e
 
 | Model | Val F1-macro | Val ROC-AUC | Val F1-spam | Val F1-legit |
 |---|---|---|---|---|
-| **LightGBM (tuned)** | **0.8548** | 0.9356 | 0.8752 | 0.8344 |
-| Random Forest | 0.8528 | 0.9412 | 0.8738 | 0.8319 |
-| XGBoost (tuned) | 0.8494 | 0.9370 | 0.8697 | 0.8291 |
-| Logistic Regression | 0.8340 | 0.8832 | 0.8576 | 0.8103 |
-| Decision Tree | 0.8113 | 0.9058 | 0.8382 | 0.7845 |
-| Gaussian Naive Bayes | 0.7865 | 0.8530 | 0.8180 | 0.7549 |
+| **Random Forest** | **0.8565** | 0.9433 | 0.8774 | 0.8355 |
+| LightGBM (tuned) | 0.8497 | 0.9356 | 0.8689 | 0.8305 |
+| XGBoost (tuned) | 0.8462 | 0.9389 | 0.8647 | 0.8277 |
+| Logistic Regression | 0.8420 | 0.9012 | 0.8627 | 0.8213 |
+| Decision Tree | 0.8198 | 0.9115 | 0.8421 | 0.7975 |
+| Gaussian Naive Bayes | 0.7807 | 0.8434 | 0.8135 | 0.7478 |
 
-**Selected model:** LightGBM (tuned) — saved to `models/best_model.joblib`
+**Selected model:** Random Forest — saved to `models/best_model.joblib`
 
 ---
 
@@ -124,17 +124,16 @@ Logistic Regression established a strong linear baseline (0.819), showing that e
 
 **Notebook:** `evaluation.ipynb` | **Data:** held-out test set (541 tokens, never seen during training)
 
-**Final test set results — LightGBM (tuned):**
+**Final test set results — Random Forest:**
 
 | Metric | Score |
 |---|---|
-| F1-macro | 0.8838 |
-| ROC-AUC | 0.9562 |
-| Avg Precision | — |
-| Spam precision / recall / F1 | 0.85 / 0.90 / 0.88 (approx from val) |
-| Legit precision / recall / F1 | 0.86 / 0.81 / 0.83 (approx from val) |
+| F1-macro | 0.8802 |
+| ROC-AUC | 0.9590 |
+| F1-spam | 0.8937 |
+| F1-legit | 0.8667 |
 
-**SHAP top features:** `n_unique_senders`, `n_transfers`, `n_unique_receivers`, `sender_receiver_ratio`, `top1_sender_share`, `n_distinct_blocks`
+**SHAP top features:** `block_range`, `n_unique_senders`, `n_unique_receivers`, `value_mean`, `top1_sender_share`, `n_distinct_blocks`, `unique_values_count`, `n_connected_components`
 
 **Error analysis:**
 - False negatives (spam that slips through): tokens with secondary organic activity post-airdrop, diluting the spam signal
@@ -152,16 +151,18 @@ Logistic Regression established a strong linear baseline (0.819), showing that e
 
 | Approach | Train size | F1-macro | Δ vs baseline |
 |---|---|---|---|
-| Supervised only (baseline) | 2,524 | **0.8838** | — |
-| Pseudo-label (t=0.10) | 6,577 | 0.8520 | −0.032 |
-| Pseudo-label (t=0.15) | 7,508 | 0.8648 | −0.019 |
-| Pseudo-label (t=0.20) | 8,440 | 0.8667 | −0.017 |
-| Self-Training (t=0.90) | 9,795 | 0.8557 | −0.028 |
-| Self-Training (t=0.80) | 10,764 | 0.8611 | −0.023 |
+| Supervised only (baseline) | 2,524 | **0.8802** | — |
+| Pseudo-label (t=0.10) | 6,577 | — | *re-run needed* |
+| Pseudo-label (t=0.15) | 7,508 | — | *re-run needed* |
+| Pseudo-label (t=0.20) | 8,440 | — | *re-run needed* |
+| Self-Training (t=0.90) | 9,795 | — | *re-run needed* |
+| Self-Training (t=0.80) | 10,764 | — | *re-run needed* |
+
+*Note: Semi-supervised results above were from the 16-feature pipeline. Re-run `semi_supervised.ipynb` with 27 features to update.*
 
 **Why it failed:** (1) labeled set already representative; (2) 14:1 pseudo-label class skew; (3) unlabeled pseudo-spam are dormant contracts (different type from training spam); (4) 53% of unlabeled tokens are genuinely uncertain.
 
-**Decision:** Retain supervised-only LightGBM as the final model.
+**Decision:** Retain supervised-only Random Forest as the final model.
 
 ---
 
@@ -184,10 +185,12 @@ Used `account_labels.csv` (~370k known Ethereum entities) to flag tokens whose t
 
 | Approach | F1-macro | Δ vs baseline |
 |---|---|---|
-| Supervised baseline | **0.8838** | — |
-| Entity pseudo-spam only | 0.8801 | −0.004 |
-| Entity spam + confidence legit | 0.8817 | −0.002 |
-| Entity flags as features (Fix 3) | 0.8802 | −0.004 |
+| Supervised baseline | **0.8802** | — |
+| Entity pseudo-spam only | — | *re-run needed* |
+| Entity spam + confidence legit | — | *re-run needed* |
+| Entity flags as features (Fix 3) | — | *re-run needed* |
+
+*Note: Label expansion results above were from the 16-feature pipeline. Re-run `label_expansion.ipynb` with 27 features to update.*
 
 `phishing_flag` and `hack_flag` scored **zero feature importance** — behavioral features already encode the signal from entity identity. **Model unchanged.**
 
@@ -201,20 +204,22 @@ Addressed the 14:1 class-skew problem from Stage 6 with three alternative approa
 
 | Approach | Train size | F1-macro | Δ vs baseline |
 |---|---|---|---|
-| Supervised baseline | 2,524 | **0.8838** | — |
-| IF-A1 spam manifold (score > 0.00) | 4,166 | 0.8769 | −0.007 |
-| IF-A1 spam manifold (score > 0.05) | 2,529 | 0.8838 | 0.000 |
-| IF-A1 spam manifold (score > 0.10) | 2,524 | 0.8838 | 0.000 |
-| IF-A2 global anomaly (auto) | — | 0.4314 | −0.452 |
-| Label Spreading k=10 α=0.2 | 2,524 | 0.8563 | −0.028 |
-| Sender-network propagation (share > 0.3) | 6,697 | 0.8696 | −0.014 |
-| Sender-network propagation (share > 0.5) | 4,760 | 0.8569 | −0.027 |
-| Sender-network propagation (share > 0.7) | 4,318 | 0.8609 | −0.023 |
+| Supervised baseline | 2,524 | **0.8802** | — |
+| IF-A1 spam manifold (score > 0.00) | 4,166 | — | *re-run needed* |
+| IF-A1 spam manifold (score > 0.05) | 2,529 | — | *re-run needed* |
+| IF-A1 spam manifold (score > 0.10) | 2,524 | — | *re-run needed* |
+| IF-A2 global anomaly (auto) | — | — | *re-run needed* |
+| Label Spreading k=10 α=0.2 | 2,524 | — | *re-run needed* |
+| Sender-network propagation (share > 0.3) | 6,697 | — | *re-run needed* |
+| Sender-network propagation (share > 0.5) | 4,760 | — | *re-run needed* |
+| Sender-network propagation (share > 0.7) | 4,318 | — | *re-run needed* |
+
+*Note: Semi-supervised results above were from the 16-feature pipeline. Re-run `improved_semi_supervised.ipynb` with 27 features to update.*
 
 **Key findings:**
-- IF-A2 (global anomaly) failed catastrophically (F1=0.43): anomaly detection flags the minority class — legit tokens — since spam is the majority at 55.7%
-- Label Spreading (−0.028): spam and legit overlap in feature space, labels blur at boundaries
-- **Sender-network propagation (−0.014):** best-performing alternative across all semi-supervised stages (6, 7, 8); uses transfer topology rather than feature similarity; diluted by 6,578 mixed-use wallets active on both spam and legit tokens
+- IF-A2 (global anomaly) failed catastrophically: anomaly detection flags the minority class — legit tokens — since spam is the majority at 55.7%
+- Label Spreading: spam and legit overlap in feature space, labels blur at boundaries
+- **Sender-network propagation:** best-performing alternative across all semi-supervised stages (6, 7, 8); uses transfer topology rather than feature similarity; diluted by 6,578 mixed-use wallets active on both spam and legit tokens
 
 **Decision:** Model unchanged. See `model_status.md` for full cross-issue summary.
 
@@ -236,7 +241,7 @@ Addressed the 14:1 class-skew problem from Stage 6 with three alternative approa
 
 ### Supporting Documents Already Available
 
-- [x] `feature_description.pdf` — full feature reference for all 16 features
+- [x] `feature_description.pdf` — full feature reference for all 27 features
 - [x] `models/val_results.csv` — complete model comparison table
 - [x] `model_status.md` — cross-issue model stability summary (Issues #3 & #4)
 - [x] All notebooks with inline results and summary cells
@@ -273,4 +278,4 @@ All data, figures, and model outputs are available across:
 
 ---
 
-*Pipeline version 3.0 | Last updated 2026-04-01*
+*Pipeline version 4.0 | Last updated 2026-04-03 | Issue #2 feature expansion (16 → 27 features)*
